@@ -1,66 +1,126 @@
-import re
-from datetime import date
+"""Точка запуска: меню системы объявлений."""
 
-users = []
-ads = []
+import inspect
 
-def find_user(name):
-    for user in users:
-        if user[0] == name:
-            return user
-    return None
+import ads as ads_module
+from ads import (author_ads, create_ad, date_sorter, delete_ad, format_ad,
+                 searcher, stat_counter)
+from storage import ADS_FILE, USERS_FILE, load_data, save_data
+from users import phoner, registration
+from utils import input_date, input_int, input_text
 
-def registration(name, phone):
-    cleaned = re.sub(r'[\s\-\(\)]', '', phone)
-    pattern = re.compile(r'^(?:\+7|7|8)?(9\d{9})$')
-    if not pattern.match(cleaned):
-        print(f"Некорректный номер телефона: {phone}")
-        return False
-    if find_user(name):
-        print(f"Пользователь {name} уже зарегистрирован")
-        return False
-    users.append([name, cleaned])
-    print(f"Пользователь {name} зарегистрирован")
-    return True
-
-def get_phone(name):
-    user = find_user(name)
-    if user:
-        print(f"Телефон пользователя {name}: {user[1]}")
-        return user[1]
-    print(f"Пользователь {name} не найден")
-    return None
+MENU = """
+=== Объявления о найденных животных ===
+1. Зарегистрироваться
+2. Показать все объявления
+3. Создать объявление
+4. Найти объявление
+5. Объявления пользователя
+6. Связаться с автором
+7. Удалить объявление
+8. Статистика
+9. Справка по функциям
+0. Выход"""
 
 
-def create_ad(name, animal, place, found_date):
-    if not find_user(name):
-        print(f"Нельзя создать объявление: {name} не зарегистрирован")
-        return False
-    ads.append([name, animal, place, found_date])
-    print(f"Объявление от {name} создано")
-    return True
-
-
-def get_ads(name):
-    found = False
+def show_ads(ads: list[dict]) -> None:
+    if not ads:
+        print("Объявлений нет")
+        return
     for ad in ads:
-        if ad[0] == name:
-            print(f"{ad[1]}, найдено: {ad[2]}, дата: {ad[3]}")
-            found = True
-    if not found:
-        print(f"У пользователя {name} нет объявлений")
+        print(format_ad(ad))
 
 
-registration("Анна", "+7 (900) 123-45-67")
-registration("Иван", "8-912-555-44-33")
-registration("Пётр", "12345")
+def show_stat(ads: list[dict]) -> None:
+    stats = stat_counter(ads)
+    print(f"Всего объявлений: {len(ads)}")
+    for animal, count in sorted(stats.items(), key=lambda item: -item[1]):
+        print(f"  {animal}: {count}")
 
-get_phone("Анна")
-get_phone("Пётр")
 
-create_ad("Анна", "Рыжая кошка", "Парк Горького", date(2026, 9, 20))
-create_ad("Анна", "Белая собака", "ул. Ленина, 10", date(2026, 9, 22))
-create_ad("Пётр", "Попугай", "Двор дома 5", date(2026, 9, 21))
+def helper() -> None:
+    for name, func in inspect.getmembers(ads_module, inspect.isfunction):
+        if func.__module__ == ads_module.__name__:
+            print(f"{name}{inspect.signature(func)}")
+            print(f"    {func.__doc__}")
 
-get_ads("Анна")
-get_ads("Иван")
+
+def registrator(users: list[dict]) -> None:
+    name = input_text("Имя: ")
+    phone = input_text("Телефон: ")
+    try:
+        registration(users, name, phone)
+    except ValueError as error:
+        print(error)
+        return
+    save_data(USERS_FILE, users)
+    print(f"Пользователь {name} зарегистрирован")
+
+
+def ad_creator(ads: list[dict], users: list[dict]) -> None:
+    author = input_text("Ваше имя: ")
+    animal = input_text("Какое животное нашли: ")
+    place = input_text("Где нашли: ")
+    found_date = input_date("Дата находки (ДД.ММ.ГГГГ): ")
+    try:
+        ad = create_ad(ads, users, author, animal, place, found_date)
+    except ValueError as error:
+        print(error)
+        return
+    save_data(ADS_FILE, ads)
+    print(f"Объявление №{ad['id']} создано")
+
+
+def contacter(users: list[dict]) -> None:
+    name = input_text("Имя автора: ")
+    phone = phoner(users, name)
+    if phone is None:
+        print(f"Пользователь {name} не найден")
+    else:
+        print(f"Телефон пользователя {name}: {phone}")
+
+
+def ad_remover(ads: list[dict]) -> None:
+    author = input_text("Ваше имя: ")
+    ad_id = input_int("Номер объявления: ")
+    if delete_ad(ads, ad_id, author):
+        save_data(ADS_FILE, ads)
+        print(f"Объявление №{ad_id} удалено")
+    else:
+        print("Объявление не найдено или принадлежит другому автору")
+
+
+def main() -> None:
+    users = load_data(USERS_FILE)
+    ads = load_data(ADS_FILE)
+
+    while True:
+        print(MENU)
+        choice = input("Выберите действие: ").strip()
+        if choice == "1":
+            registrator(users)
+        elif choice == "2":
+            show_ads(date_sorter(ads))
+        elif choice == "3":
+            ad_creator(ads, users)
+        elif choice == "4":
+            show_ads(searcher(ads, input_text("Что ищем: ")))
+        elif choice == "5":
+            show_ads(list(author_ads(ads, input_text("Имя автора: "))))
+        elif choice == "6":
+            contacter(users)
+        elif choice == "7":
+            ad_remover(ads)
+        elif choice == "8":
+            show_stat(ads)
+        elif choice == "9":
+            helper()
+        elif choice == "0":
+            print("До свидания!")
+            break
+        else:
+            print("Нет такого пункта меню")
+
+
+if __name__ == "__main__":
+    main()
